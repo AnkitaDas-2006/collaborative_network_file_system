@@ -35,9 +35,6 @@ void edit_file(const char *filename)
     FILE *fp;
     char text[1000];
 
-    printf("\nEnter new content:\n");
-    fgets(text, sizeof(text), stdin);
-
     fp = fopen(filename, "w");
 
     if (fp == NULL)
@@ -46,7 +43,20 @@ void edit_file(const char *filename)
         return;
     }
 
-    fputs(text, fp);
+    printf("\nEnter new content.\n");
+    printf("Type END on a new line when finished.\n\n");
+
+    while (1)
+    {
+        fgets(text, sizeof(text), stdin);
+
+        if (strcmp(text, "END\n") == 0)
+        {
+            break;
+        }
+
+        fputs(text, fp);
+    }
 
     fclose(fp);
 
