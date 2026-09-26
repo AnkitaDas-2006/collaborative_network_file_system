@@ -52,6 +52,14 @@ void edit_file(const char *filename)
 
     printf("File updated successfully\n");
 }
+void show_menu()
+{
+    printf("\n===== Collaborative File System =====\n");
+    printf("1. View shared file\n");
+    printf("2. Edit shared file\n");
+    printf("3. Exit\n");
+    printf("Enter your choice: ");
+}
 int main()
 {
     int sockfd;
@@ -77,7 +85,32 @@ int main()
     }
 
     printf("Connected to server\n");
+    int choice;
 
+    do
+    {
+       show_menu();
+       scanf("%d", &choice);
+       getchar();
+
+       if (choice == 1)
+       {
+          display_file("shared.txt");
+       }
+       else if (choice == 2)
+       {
+          edit_file("shared.txt");
+       }
+       else if (choice == 3)
+       {
+          printf("Exiting...\n");
+       }
+      else
+      {
+          printf("Invalid choice\n");
+      }
+
+    } while (choice != 3);
     close(sockfd);
 
     return 0;
