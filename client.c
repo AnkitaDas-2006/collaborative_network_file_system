@@ -72,6 +72,7 @@ void show_menu()
 }
 int main()
 {
+    const char *filename = "shared.txt";
     int sockfd;
     struct sockaddr_in server;
 
@@ -105,11 +106,11 @@ int main()
 
        if (choice == 1)
        {
-          display_file("shared.txt");
+          display_file("filename");
        }
        else if (choice == 2)
        {
-          edit_file("shared.txt");
+          edit_file("filename");
        }
        else if (choice == 3)
        {
