@@ -30,6 +30,28 @@ void display_file(const char *filename)
 
     fclose(fp);
 }
+void edit_file(const char *filename)
+{
+    FILE *fp;
+    char text[1000];
+
+    printf("\nEnter new content:\n");
+    fgets(text, sizeof(text), stdin);
+
+    fp = fopen(filename, "w");
+
+    if (fp == NULL)
+    {
+        printf("Unable to open file\n");
+        return;
+    }
+
+    fputs(text, fp);
+
+    fclose(fp);
+
+    printf("File updated successfully\n");
+}
 int main()
 {
     int sockfd;
