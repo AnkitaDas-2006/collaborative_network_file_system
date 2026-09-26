@@ -70,6 +70,14 @@ void show_menu()
     printf("3. Exit\n");
     printf("Enter your choice: ");
 }
+void clear_input_buffer()
+{
+    int ch;
+
+    while ((ch = getchar()) != '\n' && ch != EOF)
+    {
+    }
+}
 int main()
 {
     const char *filename = "shared.txt";
@@ -102,7 +110,7 @@ int main()
     {
        show_menu();
        scanf("%d", &choice);
-       getchar();
+       clear_input_buffer();
 
        if (choice == 1)
        {
