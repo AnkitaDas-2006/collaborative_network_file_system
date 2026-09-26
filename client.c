@@ -1,9 +1,35 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
+#include<stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<unistd.h>
+#include<arpa/inet.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+void display_file(const char *filename)
+{
+    FILE *fp;
+    char ch;
 
+    fp = fopen(filename, "r");
+
+    if (fp == NULL)
+    {
+        printf("Unable to open file\n");
+        return;
+    }
+
+    printf("\n----- Shared File -----\n");
+
+    while ((ch = fgetc(fp)) != EOF)
+    {
+        putchar(ch);
+    }
+
+    printf("\n-----------------------\n");
+
+    fclose(fp);
+}
 int main()
 {
     int sockfd;

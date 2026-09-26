@@ -1,0 +1,2 @@
+Hello from the shared file.
+This file will later be maintained by the server.
