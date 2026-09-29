@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <arpa/inet.h>
@@ -7,18 +8,143 @@
 #include <errno.h>
 
 #define MAX_CLIENTS 3
+#define MAX_FILE_SIZE 4096
+
+int send_all(int socket, const char *data, int length)
+{
+    int total = 0;
+
+    while (total < length)
+    {
+        int sent = send(socket, data + total, length - total, 0);
+
+        if (sent <= 0)
+            return -1;
+
+        total += sent;
+    }
+
+    return total;
+}
+
+int recv_line(int socket, char *buffer, int size)
+{
+    int index = 0;
+    char ch;
+
+    while (index < size - 1)
+    {
+        int result = recv(socket, &ch, 1, 0);
+
+        if (result <= 0)
+            return result;
+
+        if (ch == '\n')
+            break;
+
+        buffer[index++] = ch;
+    }
+
+    buffer[index] = '\0';
+    return index;
+}
+
+int recv_all(int socket, char *buffer, int length)
+{
+    int total = 0;
+
+    while (total < length)
+    {
+        int received = recv(socket,
+                            buffer + total,
+                            length - total,
+                            0);
+
+        if (received <= 0)
+            return -1;
+
+        total += received;
+    }
+
+    return total;
+}
+
+int read_shared_file(char *buffer)
+{
+    FILE *file = fopen("shared.txt", "rb");
+
+    if (file == NULL)
+        return 0;
+
+    int size = fread(buffer, 1, MAX_FILE_SIZE, file);
+
+    fclose(file);
+
+    return size;
+}
+
+int write_shared_file(const char *buffer, int size)
+{
+    FILE *file = fopen("shared.txt", "wb");
+
+    if (file == NULL)
+        return -1;
+
+    int written = fwrite(buffer, 1, size, file);
+
+    fclose(file);
+
+    return (written == size) ? 0 : -1;
+}
+
+void send_current_file(int client, int version)
+{
+    char file_buffer[MAX_FILE_SIZE];
+    char header[100];
+
+    int file_size = read_shared_file(file_buffer);
+
+    sprintf(header, "FILE_DATA %d %d\n", version, file_size);
+
+    send_all(client, header, strlen(header));
+
+    if (file_size > 0)
+        send_all(client, file_buffer, file_size);
+}
+
+void broadcast_update(int clients[],
+                      int sender,
+                      int version,
+                      const char *file_buffer,
+                      int file_size)
+{
+    char header[100];
+
+    sprintf(header, "FILE_UPDATE %d %d\n", version, file_size);
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (clients[i] != -1 && clients[i] != sender)
+        {
+            send_all(clients[i], header, strlen(header));
+
+            if (file_size > 0)
+                send_all(clients[i], file_buffer, file_size);
+        }
+    }
+}
 
 int main()
 {
     int server;
     int clients[MAX_CLIENTS];
+
     struct sockaddr_in server_address;
     fd_set readfds;
-    char buffer[1024];
 
-    // ==========================================
+    int file_version = 1;
+
     // STEP 1: CREATE SERVER SOCKET
-    // ==========================================
 
     server = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -30,19 +156,26 @@ int main()
 
     printf("Server socket created successfully!\n");
 
+    int reuse = 1;
 
-    // ==========================================
+    setsockopt(server,
+               SOL_SOCKET,
+               SO_REUSEADDR,
+               &reuse,
+               sizeof(reuse));
+
+
     // STEP 2: BIND SERVER TO IP ADDRESS AND PORT
-    // ==========================================
 
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = inet_addr("127.0.0.1");
     server_address.sin_port = htons(8080);
 
-    if (bind(server, (struct sockaddr *)&server_address,
+    if (bind(server,
+             (struct sockaddr *)&server_address,
              sizeof(server_address)) < 0)
     {
-        printf("Bind failed.\n");
+        printf("Bind failed: %s\n", strerror(errno));
         close(server);
         return 1;
     }
@@ -50,9 +183,7 @@ int main()
     printf("Server bound to 127.0.0.1:8080\n");
 
 
-    // ==========================================
     // STEP 3: LISTEN FOR CLIENT CONNECTIONS
-    // ==========================================
 
     if (listen(server, 3) < 0)
     {
@@ -64,60 +195,41 @@ int main()
     printf("Server is listening for clients...\n");
 
 
-    // ==========================================
     // STEP 4: PREPARE CLIENT CONNECTIONS
-    // ==========================================
 
     for (int i = 0; i < MAX_CLIENTS; i++)
-    {
         clients[i] = -1;
-    }
 
     printf("Server is ready to accept up to %d clients.\n",
            MAX_CLIENTS);
 
 
-    // ==========================================
-    // STEP 5: ACCEPT CLIENT CONNECTIONS
-    // ==========================================
-
     while (1)
     {
         FD_ZERO(&readfds);
-
         FD_SET(server, &readfds);
-
-        // Add connected clients to the set
-        for (int i = 0; i < MAX_CLIENTS; i++)
-        {
-            if (clients[i] != -1)
-            {
-                FD_SET(clients[i], &readfds);
-            }
-        }
-
-
-        // ==========================================
-        // STEP 6: HANDLE MULTIPLE CLIENTS
-        // ==========================================
 
         int max_fd = server;
 
         for (int i = 0; i < MAX_CLIENTS; i++)
         {
-            if (clients[i] > max_fd)
+            if (clients[i] != -1)
             {
-                max_fd = clients[i];
+                FD_SET(clients[i], &readfds);
+
+                if (clients[i] > max_fd)
+                    max_fd = clients[i];
             }
         }
 
-        int activity = select(
-            max_fd + 1,
-            &readfds,
-            NULL,
-            NULL,
-            NULL
-        );
+
+        // STEP 5: ACCEPT CLIENT CONNECTIONS
+
+        int activity = select(max_fd + 1,
+                              &readfds,
+                              NULL,
+                              NULL,
+                              NULL);
 
         if (activity < 0)
         {
@@ -125,16 +237,9 @@ int main()
             break;
         }
 
-
-        // ==========================================
-        // STEP 7: HANDLE NEW / RECONNECTED CLIENT
-        // ==========================================
-
         if (FD_ISSET(server, &readfds))
         {
-            int new_client;
-
-            new_client = accept(server, NULL, NULL);
+            int new_client = accept(server, NULL, NULL);
 
             if (new_client < 0)
             {
@@ -151,20 +256,14 @@ int main()
                         clients[i] = new_client;
                         added = 1;
 
-                        printf(
-                            "Client %d connected/reconnected successfully!\n",
-                            i + 1
-                        );
+                        printf("Client %d connected/reconnected successfully!\n",
+                               i + 1);
 
-                        const char *welcome =
-                            "Connected to server successfully!";
+                        const char *welcome = "WELCOME\n";
 
-                        send(
-                            new_client,
-                            welcome,
-                            strlen(welcome),
-                            0
-                        );
+                        send_all(new_client,
+                                 welcome,
+                                 strlen(welcome));
 
                         break;
                     }
@@ -172,174 +271,201 @@ int main()
 
                 if (!added)
                 {
-                    printf(
-                        "Maximum number of clients reached.\n"
-                    );
-
+                    printf("Maximum number of clients reached.\n");
                     close(new_client);
                 }
             }
         }
 
 
-        // ==========================================
-        // STEP 8: RECEIVE DATA AND SEND SHARED FILE
-        // ==========================================
+        // STEP 6: HANDLE MULTIPLE CLIENTS
 
         for (int i = 0; i < MAX_CLIENTS; i++)
         {
             if (clients[i] != -1 &&
                 FD_ISSET(clients[i], &readfds))
             {
-                int bytes_received;
+                char command[100];
 
-                bytes_received = recv(
-                    clients[i],
-                    buffer,
-                    sizeof(buffer) - 1,
-                    0
-                );
+                int result = recv_line(clients[i],
+                                       command,
+                                       sizeof(command));
 
-
-                // ------------------------------------------
-                // CLIENT DISCONNECTED
-                // ------------------------------------------
-
-                if (bytes_received == 0)
+                if (result == 0)
                 {
-                    printf(
-                        "Client %d disconnected.\n",
-                        i + 1
-                    );
+                    printf("Client %d disconnected.\n", i + 1);
 
                     close(clients[i]);
                     clients[i] = -1;
+
+                    continue;
+                }
+
+                if (result < 0)
+                {
+                    printf("Error receiving from Client %d: %s\n",
+                           i + 1,
+                           strerror(errno));
+
+                    close(clients[i]);
+                    clients[i] = -1;
+
+                    continue;
                 }
 
 
-                // ------------------------------------------
-                // RECEIVE ERROR
-                // ------------------------------------------
+                // STEP 7: HANDLE FILE REQUEST AND UPDATE PROTOCOL
 
-                else if (bytes_received < 0)
-{
-    printf(
-        "Error receiving data from Client %d: %s\n",
-        i + 1,
-        strerror(errno)
-    );
-
-    close(clients[i]);
-    clients[i] = -1;
-}
-
-
-                // ------------------------------------------
-                // MESSAGE RECEIVED
-                // ------------------------------------------
-
-                else
+                if (strcmp(command, "GET_FILE") == 0)
                 {
-                    buffer[bytes_received] = '\0';
+                    printf("Client %d requested the current file.\n",
+                           i + 1);
 
-                    printf(
-                        "Message from Client %d: %s\n",
-                        i + 1,
-                        buffer
-                    );
+                    send_current_file(clients[i],
+                                      file_version);
+                }
 
-                    const char *response =
-                        "Message received by server!";
+                else if (strncmp(command, "UPDATE ", 7) == 0)
+                {
+                    int client_version;
+                    int file_size;
 
-                    send(
-                        clients[i],
-                        response,
-                        strlen(response),
-                        0
-                    );
-
-                    printf(
-                        "Response sent to Client %d.\n",
-                        i + 1
-                    );
-
-
-                    // ------------------------------------------
-                    // SEND CURRENT SHARED FILE
-                    // ------------------------------------------
-
-                    FILE *file;
-                    char file_buffer[4096];
-                    size_t bytes_read;
-
-                    file = fopen("shared.txt", "r");
-
-                    if (file == NULL)
+                    if (sscanf(command + 7,
+                               "%d %d",
+                               &client_version,
+                               &file_size) != 2)
                     {
-                        printf(
-                            "Could not open shared.txt\n"
-                        );
+                        const char *error =
+                            "ERROR Invalid UPDATE command\n";
 
-                        const char *error_message =
-                            "Could not open shared file.";
+                        send_all(clients[i],
+                                 error,
+                                 strlen(error));
 
-                        send(
-                            clients[i],
-                            error_message,
-                            strlen(error_message),
-                            0
-                        );
+                        continue;
+                    }
+
+                    if (file_size < 0 ||
+                        file_size > MAX_FILE_SIZE)
+                    {
+                        const char *error =
+                            "ERROR File too large\n";
+
+                        send_all(clients[i],
+                                 error,
+                                 strlen(error));
+
+                        continue;
+                    }
+
+                    char new_file[MAX_FILE_SIZE];
+
+                    if (file_size > 0)
+                    {
+                        if (recv_all(clients[i],
+                                     new_file,
+                                     file_size) < 0)
+                        {
+                            printf("Failed to receive file.\n");
+
+                            close(clients[i]);
+                            clients[i] = -1;
+
+                            continue;
+                        }
+                    }
+
+
+                    if (client_version != file_version)
+                    {
+                        char current_file[MAX_FILE_SIZE];
+                        char conflict_header[100];
+
+                        int current_size =
+                            read_shared_file(current_file);
+
+                        sprintf(conflict_header,
+                                "CONFLICT %d %d\n",
+                                file_version,
+                                current_size);
+
+                        send_all(clients[i],
+                                 conflict_header,
+                                 strlen(conflict_header));
+
+                        if (current_size > 0)
+                        {
+                            send_all(clients[i],
+                                     current_file,
+                                     current_size);
+                        }
+
+                        printf("Conflict detected for Client %d.\n",
+                               i + 1);
                     }
                     else
                     {
-                        bytes_read = fread(
-                            file_buffer,
-                            1,
-                            sizeof(file_buffer) - 1,
-                            file
-                        );
+                        file_version++;
 
-                        file_buffer[bytes_read] = '\0';
-
-                        fclose(file);
-
-                        if (bytes_read > 0)
+                        if (write_shared_file(new_file,
+                                              file_size) < 0)
                         {
-                            send(
-                                clients[i],
-                                file_buffer,
-                                bytes_read,
-                                0
-                            );
+                            const char *error =
+                                "ERROR Could not save file\n";
 
-                            printf(
-                                "Current shared file sent to Client %d.\n",
-                                i + 1
-                            );
+                            send_all(clients[i],
+                                     error,
+                                     strlen(error));
+
+                            continue;
                         }
-                        else
-                        {
-                            printf(
-                                "Shared file is empty.\n"
-                            );
-                        }
+
+                        char success[100];
+
+                        sprintf(success,
+                                "UPDATE_OK %d\n",
+                                file_version);
+
+                        send_all(clients[i],
+                                 success,
+                                 strlen(success));
+
+                        broadcast_update(clients,
+                                         clients[i],
+                                         file_version,
+                                         new_file,
+                                         file_size);
+
+                        printf("File updated successfully. Version: %d\n",
+                               file_version);
                     }
+                }
+
+                else
+                {
+                    const char *error =
+                        "ERROR Unknown command\n";
+
+                    send_all(clients[i],
+                             error,
+                             strlen(error));
                 }
             }
         }
+
+
+        // STEP 8: SEND UPDATED FILE TO OTHER CLIENTS
+
+        /*
+            Accepted updates are sent to all other
+            connected clients by broadcast_update().
+        */
     }
-
-
-    // ==========================================
-    // CLEANUP
-    // ==========================================
 
     for (int i = 0; i < MAX_CLIENTS; i++)
     {
         if (clients[i] != -1)
-        {
             close(clients[i]);
-        }
     }
 
     close(server);
