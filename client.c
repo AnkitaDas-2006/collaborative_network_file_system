@@ -6,6 +6,89 @@
 #include<sys/types.h>
 #include<sys/socket.h>
 #include<netinet/in.h>
+#define MAX_FILE_SIZE 4096
+int receive_line(int sockfd, char *buffer, int size)
+{
+    int index = 0;
+    char ch;
+
+    while (index < size - 1)
+    {
+        int bytes = recv(sockfd, &ch, 1, 0);
+
+        if (bytes <= 0)
+        {
+            return -1;
+        }
+
+        if (ch == '\n')
+        {
+            break;
+        }
+
+        buffer[index++] = ch;
+    }
+
+    buffer[index] = '\0';
+
+    return index;
+}
+int receive_file(int sockfd, int *version)
+{
+    char header[100];
+    char file_buffer[MAX_FILE_SIZE];
+
+    if (receive_line(sockfd, header, sizeof(header)) < 0)
+    {
+       return -1;
+    }
+    int file_size;
+
+    if (sscanf(header, "FILE_DATA %d %d", version, &file_size) != 2)
+    {
+        printf("Invalid file data received from server\n");
+        return -1;
+    }
+
+    if (file_size < 0 || file_size > MAX_FILE_SIZE)
+    {
+        printf("Invalid file size received from server\n");
+        return -1;
+    }
+
+    int total = 0;
+
+    while (total < file_size)
+    {
+        int bytes = recv(sockfd,
+                         file_buffer + total,
+                         file_size - total,
+                         0);
+
+        if (bytes <= 0)
+        {
+            return -1;
+        }
+
+        total += bytes;
+    }
+
+    FILE *fp;
+
+    fp = fopen("shared.txt", "wb");
+
+    if (fp == NULL)
+    {
+        printf("Unable to open shared.txt\n");
+        return -1;
+    }
+
+    fwrite(file_buffer, 1, file_size, fp);
+
+    fclose(fp);
+
+    return 0;
+}
 void display_file(const char *filename)
 {
     FILE *fp;
@@ -104,6 +187,30 @@ int main()
     }
 
     printf("Connected to server\n");
+    char welcome[100];
+
+    if (receive_line(sockfd, welcome, sizeof(welcome)) < 0)
+    {
+      printf("Failed to receive welcome message\n");
+      close(sockfd);
+      return 1;
+    }
+
+    printf("Server: %s\n", welcome);
+    int file_version;
+
+    const char *request = "GET_FILE\n";
+
+    send(sockfd, request, strlen(request), 0);
+
+    if (receive_file(sockfd, &file_version) < 0)
+    {
+       printf("Failed to receive shared file from server\n");
+       close(sockfd);
+       return 1;
+    }
+
+    printf("Shared file received. Version: %d\n", file_version);
     int choice;
 
     do
@@ -114,11 +221,11 @@ int main()
 
        if (choice == 1)
        {
-          display_file("filename");
+          display_file(filename);
        }
        else if (choice == 2)
        {
-          edit_file("filename");
+          edit_file(filename);
        }
        else if (choice == 3)
        {
