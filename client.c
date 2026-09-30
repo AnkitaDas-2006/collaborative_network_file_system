@@ -7,6 +7,7 @@
 #include<sys/socket.h>
 #include<netinet/in.h>
 #define MAX_FILE_SIZE 4096
+int receive_file_update(int sockfd, const char *header, int *file_version);
 int receive_line(int sockfd, char *buffer, int size)
 {
     int index = 0;
@@ -37,10 +38,9 @@ int receive_file(int sockfd, int *version)
 {
     char header[100];
     char file_buffer[MAX_FILE_SIZE];
-
     if (receive_line(sockfd, header, sizeof(header)) < 0)
     {
-       return -1;
+        return -1;
     }
     int file_size;
 
@@ -157,40 +157,50 @@ void handle_update_response(int sockfd, int *file_version)
 {
     char response[100];
 
-    if (receive_line(sockfd, response, sizeof(response)) < 0)
+    while (1)
     {
-        printf("Failed to receive server response\n");
-        return;
-    }
+        if (receive_line(sockfd, response, sizeof(response)) < 0)
+        {
+            printf("Failed to receive server response\n");
+            return;
+        }
 
-    if (sscanf(response, "UPDATE_OK %d", file_version) == 1)
-    {
-        printf("File updated successfully. Version: %d\n", *file_version);
-    }
-    else if (strncmp(response, "CONFLICT", 8) == 0)
-    {
-        printf("Conflict detected. Server has a newer version.\n");
-    }
-    else if (strncmp(response, "ERROR", 5) == 0)
-    {
-        printf("Server: %s\n", response);
-    }
-    else
-    {
-        printf("Unknown server response: %s\n", response);
+        if (strncmp(response, "FILE_UPDATE", 11) == 0)
+        {
+            if (receive_file_update(sockfd, response, file_version) < 0)
+            {
+                printf("Failed to receive file update\n");
+                return;
+            }
+
+            continue;
+        }
+
+        if (sscanf(response, "UPDATE_OK %d", file_version) == 1)
+        {
+            printf("File updated successfully. Version: %d\n", *file_version);
+        }
+        else if (strncmp(response, "CONFLICT", 8) == 0)
+        {
+            printf("Conflict detected. Server has a newer version.\n");
+        }
+        else if (strncmp(response, "ERROR", 5) == 0)
+        {
+            printf("Server: %s\n", response);
+        }
+        else
+        {
+            printf("Unknown server response: %s\n", response);
+        }
+
+        break;
     }
 }
-int receive_file_update(int sockfd, int *file_version)
+int receive_file_update(int sockfd, const char *header, int *file_version)
 {
-    char header[100];
     char file_buffer[MAX_FILE_SIZE];
     int version;
     int file_size;
-
-    if (receive_line(sockfd, header, sizeof(header)) < 0)
-    {
-        return -1;
-    }
 
     if (sscanf(header, "FILE_UPDATE %d %d", &version, &file_size) != 2)
     {
