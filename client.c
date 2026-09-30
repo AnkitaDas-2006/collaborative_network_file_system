@@ -153,6 +153,25 @@ int send_update(int sockfd, int version)
 
     return 0;
 }
+int receive_all(int sockfd, char *buffer, int length)
+{
+    int total = 0;
+
+    while (total < length)
+    {
+        int received = recv(sockfd,
+                            buffer + total,
+                            length - total,
+                            0);
+
+        if (received <= 0)
+            return -1;
+
+        total += received;
+    }
+
+    return total;
+}
 void handle_update_response(int sockfd, int *file_version)
 {
     char response[100];
@@ -181,9 +200,46 @@ void handle_update_response(int sockfd, int *file_version)
             printf("File updated successfully. Version: %d\n", *file_version);
         }
         else if (strncmp(response, "CONFLICT", 8) == 0)
-        {
-            printf("Conflict detected. Server has a newer version.\n");
-        }
+	{
+    		int current_version;
+    		int current_size;
+    		char file_buffer[MAX_FILE_SIZE];
+
+    		if (sscanf(response, "CONFLICT %d %d", &current_version, &current_size) != 2)
+    		{
+        		printf("Invalid conflict response from server.\n");
+        		return;
+    		}
+
+    		if (current_size < 0 || current_size >= MAX_FILE_SIZE)
+    		{
+        		printf("Invalid file size received from server.\n");
+        		return;
+    		}
+
+    		if (receive_all(sockfd, file_buffer, current_size) < 0)
+    		{
+        		printf("Failed to receive current shared file.\n");
+        		return;
+    		}
+
+    		file_buffer[current_size] = '\0';
+
+    		FILE *fp = fopen("shared.txt", "w");
+    		if (fp == NULL)
+    		{
+        		printf("Failed to update local shared file.\n");
+        		return;
+    		}
+
+    		fwrite(file_buffer, 1, current_size, fp);
+    		fclose(fp);
+
+    		*file_version = current_version;
+
+    		printf("Conflict detected. Server has a newer version.\n");
+    		printf("Local file synchronized to server version %d.\n", current_version);
+	}
         else if (strncmp(response, "ERROR", 5) == 0)
         {
             printf("Server: %s\n", response);
