@@ -361,7 +361,7 @@ The system is intended to demonstrate the networking, synchronization, consisten
 
 Compile the server:
 
-gcc server.c -o server
+gcc server.c -o server -pthread
 
 Compile the client:
 
