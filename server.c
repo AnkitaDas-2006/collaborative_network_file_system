@@ -233,6 +233,9 @@ int main()
 
         if (activity < 0)
         {
+            if (errno == EINTR)
+                continue;
+
             printf("Select failed.\n");
             break;
         }
@@ -291,6 +294,12 @@ int main()
                                        command,
                                        sizeof(command));
 
+                /*
+                   NORMAL DISCONNECT:
+                   recv() returns 0 when the client closes
+                   the connection normally.
+                */
+
                 if (result == 0)
                 {
                     printf("Client %d disconnected.\n", i + 1);
@@ -301,11 +310,26 @@ int main()
                     continue;
                 }
 
+                /*
+                   ABRUPT DISCONNECT:
+                   ECONNRESET means the client reset the
+                   TCP connection, for example by closing
+                   abruptly.
+                */
+
                 if (result < 0)
                 {
-                    printf("Error receiving from Client %d: %s\n",
-                           i + 1,
-                           strerror(errno));
+                    if (errno == ECONNRESET)
+                    {
+                        printf("Client %d disconnected abruptly.\n",
+                               i + 1);
+                    }
+                    else
+                    {
+                        printf("Error receiving from Client %d: %s\n",
+                               i + 1,
+                               strerror(errno));
+                    }
 
                     close(clients[i]);
                     clients[i] = -1;
