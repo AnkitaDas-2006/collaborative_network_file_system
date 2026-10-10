@@ -1,4 +1,6 @@
-# Collaborative Network File System
+----------------------------------------------------------------------------------------------------------------------------------
+
+## Collaborative Network File System
 
 A client-server based collaborative file system that allows multiple clients to access and modify a common file through TCP socket communication.
 
@@ -17,7 +19,7 @@ The system is designed so that:
 - Clients can edit and submit changes to the shared file.
 - The server maintains the authoritative version of the file.
 - Updates made by one client are propagated to other connected clients.
-- Concurrent updates are handled using version-based conflict resolution.
+- Concurrent updates are handled using an operation-based collaborative editing mechanism. Clients send INSERT and DELETE operations with their base revision, and the server transforms concurrent operations before applying them to the authoritative document.
 - A stale client cannot silently overwrite a newer update.
 - A client that disconnects can reconnect and obtain the latest version of the shared file.
 
@@ -29,14 +31,15 @@ The system demonstrates important Computer Networks concepts including TCP socke
 
 The system follows a centralized client-server architecture.
 
-                    +----------------------+
-                    |        SERVER        |
-                    |                      |
-                    |  Shared File         |
-                    |  File Version        |
-                    |  Conflict Handling   |
-                    |  Client Management   |
-                    +----------+-----------+
+                    +---------------------------+
+                    |        SERVER             |
+                    |                           |
+                    |  Documents                |
+                    |  Revisions                |
+                    |  Operation History        |
+                    |  Operation Transformation |
+                    |  Client Management        |
+                    +----------+----------------+
                                |
                  +-------------+-------------+
                  |             |             |
@@ -45,6 +48,7 @@ The system follows a centralized client-server architecture.
             | Client 1|   | Client 2|   | Client 3|
             +---------+   +---------+   +---------+
 The server acts as the central source of truth.
+The server maintains the authoritative document state and orders accepted editing operations so that connected clients can remain synchronized.
 
 Each client maintains a local copy of the shared file and the version number received from the server.
 
@@ -69,158 +73,127 @@ Server
 
 The server is responsible for:
 
-Creating and binding the TCP socket.
-Listening for client connections.
-Accepting multiple clients.
-Managing connected clients.
-Maintaining the shared file.
-Maintaining the current file version.
-Sending the current file to clients.
-Receiving client updates.
-Checking update versions.
-Detecting conflicts.
-Broadcasting successful updates to other connected clients.
-Handling client disconnections and reconnections.
+- Maintaining multiple documents.
+- Maintaining the current revision of each document.
+- Maintaining the history of accepted editing operations.
+- Receiving INSERT and DELETE operations from clients.
+- Transforming incoming operations against previously accepted operations.
+- Applying transformed operations to the authoritative document.
+- Incrementing the document revision after each accepted operation.
+- Sending acknowledgements to the editing client.
+- Broadcasting accepted operations to other connected clients.
+- Handling client disconnections.
 
 Client
 
 The client is responsible for:
 
-Connecting to the server.
-Receiving the current shared file.
-Displaying the shared file.
-Allowing the user to edit the file.
-Sending file updates to the server.
-Maintaining the locally known file version.
-Processing successful update responses.
-Processing updates made by other clients.
-Handling conflict responses.
-Updating its local file after a conflict.
-Reconnecting and obtaining the latest server file.
+- Maintaining a local copy of the currently opened document.
+- Maintaining the current document revision.
+- Sending INSERT and DELETE operations to the server.
+- Processing acknowledgements for its own operations.
+- Receiving editing operations from other clients.
+- Applying live INSERT and DELETE operations locally.
+- Keeping the local document synchronized with the server revision.
+- Detecting revision gaps and requesting resynchronization when necessary.
 
 ## 5. Communication Protocol
 
 The client and server communicate using a simple application-level protocol over TCP.
 
 Client Requests
-Get Current File
-GET_FILE
 
-The client requests the latest version of the shared file from the server.
+LIST
 
-Update File
-UPDATE <version> <size>
+CREATE <name>
 
-The client sends the version it currently has along with the size of the updated file, followed by the file contents.
+OPEN <name>
+
+EDIT <file_name> <base_revision> INSERT <position> <length>
+<text payload>
+
+EDIT <file_name> <base_revision> DELETE <position> <length>
+
+QUIT
 
 ## 6. Server Responses
-Welcome
+
 WELCOME
 
-Sent when a client successfully connects.
+FILES <count>
 
-File Data
-FILE_DATA <version> <size>
+DOC <name> <revision> <size>
+<document contents>
 
-The server sends the current file version and file size, followed by the file contents.
+CREATE_OK
 
-Successful Update
-UPDATE_OK <new_version>
+ACK <name> <revision> <position> <length>
 
-Sent when the server accepts a client's update.
+OP <name> <revision> <sender> INSERT <position> <length>
+<text payload>
 
-The server increments the file version after accepting the update.
+OP <name> <revision> <sender> DELETE <position> <length>
 
-File Update
-FILE_UPDATE <version> <size>
-
-Sent to other connected clients when one client successfully updates the shared file.
-
-Conflict
-CONFLICT <current_version> <current_size>
-
-Sent when a client attempts to update the file using an outdated version.
-
-The server also sends the current file contents so that the stale client can synchronize with the latest version.
-
-Error
 ERROR <message>
 
-Used to report invalid requests or other communication errors.
+BYE
 
-## 7. Version-Based Conflict Resolution
+## 7. Operation-Based Collaborative Editing
 
-The system uses version-based conflict resolution.
+The system uses an operation-based collaborative editing mechanism.
 
-Each version of the shared file is identified by an integer version number.
+Instead of sending the complete modified file, a client sends an
+editing operation to the server.
 
-For example:
+Two operation types are supported:
 
-Version 1
-    |
-    v
-Client 1 updates
-    |
-    v
-Version 2
+- INSERT
+- DELETE
 
-A client sends the version number it last received when submitting an update.
+Each operation contains the document name, the client's base
+revision, operation position, and operation length. INSERT operations
+also contain the inserted text.
 
-The server compares:
+The server is the authoritative source of truth. When an operation
+arrives, the server compares its base revision with the current
+document revision.
 
-Client Version
-       vs
-Server Version
-Case 1: Versions Match
+If previous operations have already been accepted, the incoming
+operation is transformed against the relevant operation history.
 
-If:
+The transformed operation is then applied to the authoritative
+document.
 
-Client Version == Server Version
+After applying the operation:
 
-the update is accepted.
+1. The document revision is incremented.
+2. The accepted operation is stored in the operation history.
+3. An ACK is sent to the originating client.
+4. The operation is broadcast to other connected clients.
 
-The server:
-
-Writes the new file.
-Increments the version.
-Sends UPDATE_OK to the updating client.
-Broadcasts the new file to other connected clients.
-
-Case 2: Versions Do Not Match
-
-If:
-
-Client Version != Server Version
-
-the client has a stale copy.
-
-The server rejects the update and sends:
-
-CONFLICT <current_version> <current_size>
-
-followed by the current file.
-
-The client receives the latest file and updates its local copy.
-
-This prevents a stale client from silently overwriting a newer update.
+Other clients apply the received operation to their local copy,
+allowing edits to appear as live updates.
 
 ## 8. Consistency Model
 
-The server acts as the authoritative source of truth for the shared file.
+The server acts as the authoritative source of truth for all
+documents.
 
-The client maintains:
+Each client maintains a local copy of the currently opened document
+and its revision number.
 
-A local copy of the file.
-The version number of that copy.
+Clients submit editing operations based on the revision they last
+observed.
 
-The server maintains:
+The server orders accepted operations and transforms incoming
+operations against previously accepted operations when necessary.
 
-The authoritative shared file.
-The current version number.
+This allows concurrent edits to be incorporated into the shared
+document instead of simply rejecting every operation based on a stale
+revision.
 
-A client update is accepted only when the client is working with the current server version.
-
-Therefore, stale updates are detected before they can overwrite newer data.
+Accepted operations are propagated to other connected clients so that
+their local copies remain synchronized.
 
 ## 9. Update Propagation
 
@@ -228,22 +201,22 @@ When a client successfully modifies the shared file:
 
 Client 1
    |
-   | UPDATE
+   | EDIT ... INSERT/DELETE
    v
 Server
    |
-   | Update accepted
+   | Transform operation
    v
-New File Version
+Apply to authoritative document
    |
-   +------------+------------+
-   |            |            |
-   v            v            v
-Client 1      Client 2      Client 3
+   | Revision++
+   +------------+
+   |            |
+  ACK           OP
+   |            |
+Client 1     Client 2 / Client 3
 
-The server broadcasts the accepted update to the other connected clients.
-
-This allows connected clients to synchronize their local copies with the server.
+The new server explicitly sends an ACK to the originating client and broadcasts an OP to other clients.
 
 ## 10. Client Disconnection and Reconnection
 
@@ -253,175 +226,131 @@ Other clients can continue working with the shared file.
 
 If the disconnected client later reconnects, it requests the current shared file from the server.
 
-The server sends the latest:
-
-FILE_DATA <version> <size>
-
-and the file contents.
-
-Therefore, the reconnecting client does not continue using an outdated version.
-
 ## 11. Conflict Handling Example
 
-Suppose the server currently has:
+Suppose both Client 1 and Client 2 have revision 5.
 
-Version = 5
+Client 1 performs:
 
-Client 1 and Client 2 both previously received:
+INSERT at position 5
 
-Version = 5
+Client 2 performs:
 
-Client 1 submits an update first.
+INSERT at position 10
 
-The server accepts it and changes the version to:
+Both operations are submitted using base revision 5.
 
-Version = 6
+The server accepts one operation first and increments the document
+revision.
 
-Client 2 still has:
+When the second operation arrives, the server transforms its position
+relative to the already accepted operation.
 
-Version = 5
+The transformed operation is then applied to the document.
 
-If Client 2 now submits:
+The server sends an ACK to the originating client and broadcasts the
+accepted operation to the other clients.
 
-UPDATE 5 <size>
-
-the server compares:
-
-Client Version = 5
-Server Version = 6
-
-Since the versions do not match, the server detects a conflict.
-
-Client 2 receives the latest file and is informed:
-
-Conflict detected. Server has a newer version.
-
-The stale update is not silently applied.
+Therefore, both edits can be incorporated into the shared document
+without simply rejecting the second client's edit.
 
 ## 12. Testing Performed
 
 The following scenarios have been tested:
 
 Test 1: Client Connection
-Server starts successfully.
-Clients can connect through TCP.
-Server accepts multiple clients.
-Test 2: Shared File Retrieval
-Clients request the current shared file.
-Server sends the current file and version.
-Test 3: File Update
-A client edits the shared file.
-The server accepts the update.
-The file version is incremented.
-Test 4: Update Propagation
-One client updates the file.
-Other connected clients receive the updated file.
-Test 5: Concurrent Update Conflict
-One client updates the file.
-Another client attempts to update using an older version.
-The server detects the conflict.
-The stale update is rejected.
-The latest server file is sent to the stale client.
-Test 6: Conflict Payload Handling
+Server starts successfully and multiple clients connect through TCP.
 
-The client correctly receives both:
+Test 2: File Listing
+Clients can request and view the available documents.
 
-CONFLICT <version> <size>
+Test 3: File Creation
+A client can create a new document on the server.
 
-and the accompanying current file contents.
+Test 4: File Opening
+Clients can open and receive the current document and revision.
 
-This prevents leftover file data from remaining in the TCP receive buffer and interfering with subsequent protocol messages.
+Test 5: Insert Operation
+A client inserts text and the server accepts the operation.
 
-Test 7: Client Disconnection
-A connected client disconnects.
-The server continues operating with the remaining clients.
-Test 8: Reconnection
-A previously disconnected client reconnects.
-The client requests the current file.
-The latest shared file and version are received.
-Test 9: Three-Client Operation
+Test 6: Delete Operation
+A client deletes text and the server applies the operation.
 
-Three clients have been connected to the server and tested with shared-file operations.
+Test 7: Live Operation Propagation
+An operation performed by one client is received and applied by
+other connected clients.
+
+Test 8: Simultaneous Editing
+Multiple clients perform edits on the same document while connected.
+The server processes the operations and maintains a consistent
+document state.
+
+Test 9: Revision Tracking
+Document revisions increase after accepted operations.
+
+Test 10: Three-Client Operation
+Three clients are connected to the same server and tested with
+collaborative editing operations.
+
+Test 11: Disconnect and Reconnect
+A disconnected client can reconnect and obtain the current document
+state.
 
 ## 13. Limitations
 
-The current implementation is designed as a compact academic demonstration of collaborative network file sharing.
-
 Current limitations include:
 
-The system operates on a single shared file.
-The maximum file size is limited by the configured buffer size.
-Conflict resolution is version-based rather than character-level collaborative editing.
-The server acts as the central authority.
-The client interface is terminal based.
-
-The system is intended to demonstrate the networking, synchronization, consistency, and conflict-resolution concepts required by the project.
+- The implementation is a simplified academic collaborative editing
+  system rather than a full production-grade Google Docs implementation.
+- The maximum document size is limited by the configured buffer size.
+- The client interface is terminal based.
+- The system supports INSERT and DELETE operations rather than a
+  complete character-level editor with cursor synchronization.
+- The server acts as the central authority for document state.
 
 ## 14. How to Compile
 
 Compile the server:
 
-gcc server.c -o server -pthread
+gcc server_final.c -o Server
 
 Compile the client:
 
-gcc client.c -o client
+gcc client_final.c -o Client
 
 ## 15. How to Run
+
 Step 1: Start the Server
-
 Open a terminal:
+./Server
 
-./server
 Step 2: Start Client 1
-
 Open another terminal:
+./Client
 
-./client
 Step 3: Start Client 2
-
 Open another terminal:
+./Client
 
-./client
 Step 4: Start Client 3
-
 Open another terminal:
-
-./client
+./Client
 
 The three clients can then access the same shared file through the server.
 
-## 16. Example Demonstration Flow
-
-A typical demonstration can be performed as follows:
-
-1. Start server.
-2. Connect Client 1.
-3. Connect Client 2.
-4. Connect Client 3.
-5. Display the shared file on all clients.
-6. Edit the file from Client 1.
-7. Show the update received by Clients 2 and 3.
-8. Create a stale-version update from another client.
-9. Show the conflict detection.
-10. Show the latest file received by the stale client.
-11. Disconnect a client.
-12. Modify the file using another connected client.
-13. Reconnect the disconnected client.
-14. Show that it receives the latest shared file.
-
-## 17. Project Structure
+## 16. Project Structure
 collaborative_network_file_system/
 │
-├── server.c
-├── client.c
-├── shared.txt
+├── server_final.c
+├── client_final.c
+├── documents
+|	|--- shared.txt
 ├── README.md
 └── README_writeup.md
 File Description
 File	Description
-server.c	Server-side implementation
-client.c	Client-side implementation
+server_final.c	Server-side implementation
+client_final.c	Client-side implementation
 shared.txt	Shared file used by the system
 README.md	Project documentation
 README_writeup.md	Initial project write-up/submission document
@@ -451,12 +380,43 @@ TCP socket programming
 Client-server architecture
 Multiple concurrent clients
 Shared file management
-Version tracking
-Update propagation
-Conflict detection
+Operation-based collaborative editing
 Synchronization
 Disconnect/reconnect handling
 Git-based collaborative development
 
-The version-based conflict-resolution mechanism ensures that a client with an outdated file version cannot silently overwrite a newer version maintained by the server.
+The system uses an operation-based collaborative editing mechanism.
 
+Instead of sending the complete modified file, a client sends an
+editing operation to the server.
+
+Two operation types are supported:
+
+- INSERT
+- DELETE
+
+Each operation contains the document name, the client's base
+revision, operation position, and operation length. INSERT operations
+also contain the inserted text.
+
+The server is the authoritative source of truth. When an operation
+arrives, the server compares its base revision with the current
+document revision.
+
+If previous operations have already been accepted, the incoming
+operation is transformed against the relevant operation history.
+
+The transformed operation is then applied to the authoritative
+document.
+
+After applying the operation:
+
+1. The document revision is incremented.
+2. The accepted operation is stored in the operation history.
+3. An ACK is sent to the originating client.
+4. The operation is broadcast to other connected clients.
+
+Other clients apply the received operation to their local copy,
+allowing edits to appear as live updates.
+
+----------------------------------------------------------------------------------------------------------------------------------
