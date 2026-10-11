@@ -2,11 +2,55 @@
 #include<stdlib.h>
 #include<string.h>
 #include<unistd.h>
+#include<errno.h>
+#include<ctype.h>
 #include<arpa/inet.h>
 #include<sys/types.h>
 #include<sys/socket.h>
+#include<sys/select.h>
 #include<netinet/in.h>
+void show_menu(void);
+
 #define MAX_FILE_SIZE 4096
+#define PORT 8080
+#define MAx_NAME 100
+#define MAX_LINE 512
+#define MAX_INSERT 400
+#define MAX_FILES 50
+
+int sock;
+int disconnected = 0;
+
+char current_name[MAX_NAME] = "";
+char current_content[MAX_FILE_SIZE + 1] = "";
+int curent_size = 0;
+int current_revision = 1;
+
+int pending_edit = 0;
+char pending_type[10] = "";
+char pending_text[MAX-INSERT + 1] = "";
+int pending_length = 0;
+int response_kind = 0;
+int response_done = 0;
+
+int send_all(int fd, const char *buffer, int length)
+{
+    int sent = 0;
+
+    while (sent < length)
+    {
+        int n = send(fd, buffer + sent, length - sent, 0);
+
+        if (n <= 0)
+        {
+           return -1;
+        }
+		sent += n;
+    }
+
+    return 0;
+}
+
 int receive_file_update(int sockfd, const char *header, int *file_version);
 int receive_line(int sockfd, char *buffer, int size)
 {
@@ -89,24 +133,7 @@ int receive_file(int sockfd, int *version)
 
     return 0;
 }
-int send_all(int sockfd, const char *buffer, int size)
-{
-    int total = 0;
-
-    while (total < size)
-    {
-        int bytes = send(sockfd, buffer + total, size - total, 0);
-
-        if (bytes <= 0)
-        {
-            return -1;
-        }
-
-        total += bytes;
-    }
-
-    return total;
-}
+   
 int read_file(const char *filename, char *buffer)
 {
     FILE *fp;
